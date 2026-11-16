@@ -36,6 +36,17 @@ RSI_HIGH, RSI_LOW = 70, 30
 GAP_MIN = 3.0          # % open vs previous close
 TOP_N = 10             # rows per table
 
+# Three-candle favicon (green, red, green), URL-encoded for a data: URI
+FAVICON = (
+    "%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
+    "%3Crect width='32' height='32' rx='7' fill='%23111827'/%3E"
+    "%3Cg stroke-width='2' stroke-linecap='round'%3E"
+    "%3Cpath d='M8 9v16' stroke='%2322c55e'/%3E%3Crect x='5' y='13' width='6' height='8' rx='1' fill='%2322c55e'/%3E"
+    "%3Cpath d='M16 6v18' stroke='%23ef4444'/%3E%3Crect x='13' y='9' width='6' height='10' rx='1' fill='%23ef4444'/%3E"
+    "%3Cpath d='M24 4v15' stroke='%2322c55e'/%3E%3Crect x='21' y='6' width='6' height='9' rx='1' fill='%2322c55e'/%3E"
+    "%3C/g%3E%3C/svg%3E"
+)
+
 
 def rsi(close, n=14):
     delta = close.diff()
@@ -202,6 +213,7 @@ def page(sections, generated):
     return f"""<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>סורק טכני יומי</title>
+<link rel="icon" href="data:image/svg+xml,{FAVICON}">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap">
 <style>{CSS}</style></head><body>
 <header><h1>סורק טכני יומי</h1><nav><a href="#us">ארה״ב</a><a href="#il">ת״א</a></nav>
