@@ -148,13 +148,15 @@ COLUMNS = [("שער", "price"), ("שינוי", "chg"), ("גאפ", "gap"), ("RSI"
 THEAD = "<th>מניה</th>" + "".join(f'<th><a href="#g-{k}">{t}</a></th>' for t, k in COLUMNS)
 
 
-def row(r, chart_url, fx):
+def row(r, chart_url, fx, tag=""):
+    """One table row. tag (market label) marks a search row: hidden until it matches."""
     stop = r.close - STOP_ATR * r.atr
     # data-c / data-s: close and stop in ILS per share, read by the sizing script
     sizing = f' data-c="{r.close * fx:.4f}" data-s="{stop * fx:.4f}"' if fx and stop > 0 else ""
+    sizing += " hidden" if tag else ""
     return (
         f'<tr{sizing}><td><a href="{chart_url(r.sym)}" target="_blank" rel="noopener">'
-        f'<b>{html.escape(r.sym.removesuffix(".TA"))}</b></a><small>{html.escape(r["name"])}</small></td>'
+        f'<b>{html.escape(r.sym.removesuffix(".TA"))}</b></a><small>{html.escape(r["name"])}{f" · {tag}" if tag else ""}</small></td>'
         f'<td class="num">{r.close:,.2f}</td><td class="num">{pct(r.chg)}</td>'
         f'<td class="num">{pct(r.gap)}</td><td class="num">{r.rsi:.0f}</td>'
         f'<td class="num">×{r.relvol:.1f}</td><td class="num">{r.atr / r.close * 100:.1f}%</td>'
@@ -169,6 +171,14 @@ def table(title, hint, df, chart_url, fx):
     body = "".join(row(r, chart_url, fx) for _, r in df.head(TOP_N).iterrows())
     return f"""<section><h3>{title}</h3><p class="hint">{hint}</p><div class="scroll"><table>
 <thead><tr>{THEAD}</tr></thead><tbody>{body}</tbody></table></div></section>"""
+
+
+def search_box(markets):
+    """All scanned stocks as hidden rows; SEARCH_JS shows the ones matching the query."""
+    rows = "".join(row(r, url, fx, tag) for df, url, fx, tag in markets for _, r in df.iterrows())
+    return f"""<section class="search"><input id="q" type="search" placeholder="חיפוש מניה לפי טיקר או שם" autocomplete="off">
+<div class="scroll" hidden><table><thead><tr>{THEAD}</tr></thead><tbody id="all">{rows}</tbody></table></div>
+<p class="empty" hidden>לא נמצאה מניה. הסורק כולל רק את S&amp;P 500 ואת המניות הגדולות בתל אביב.</p></section>"""
 
 
 def market(key, title, df, chart_url, unit, fx):
@@ -236,6 +246,10 @@ i.up{background:var(--chip-up)}i.down{background:var(--chip-down)}
 .panel input{width:7.5em;font:inherit;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);direction:ltr}
 .panel input[name=risk],.panel input[name=cap]{width:4.5em}
 .panel small{color:var(--mute);flex-basis:100%}
+.search{margin:14px 0 0}
+.search input{width:100%;font:inherit;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
+.search .scroll{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 14px;margin-top:8px}
+.search .empty{margin-top:8px}
 th a{color:inherit;text-decoration:underline dotted}
 .panel a{color:var(--accent)}
 [id]{scroll-margin-top:70px}
@@ -270,6 +284,23 @@ SIZING_JS = """(() => {
     });
   }
   f.addEventListener('input', calc); calc();
+})();"""
+
+SEARCH_JS = """(() => {
+  const q = document.getElementById('q'), tbody = document.getElementById('all'), rows = [...tbody.rows],
+        box = tbody.closest('.scroll'), none = box.nextElementSibling;
+  // 0 = exact ticker, 1 = ticker starts with query, 2 = query anywhere in ticker or name, 3 = no match
+  const rank = (tr, s) => {
+    const t = tr.querySelector('b').textContent.toLowerCase();
+    return t === s ? 0 : t.startsWith(s) ? 1 : tr.cells[0].textContent.toLowerCase().includes(s) ? 2 : 3;
+  };
+  q.addEventListener('input', () => {
+    const s = q.value.trim().toLowerCase();
+    const hits = s ? rows.map(tr => [rank(tr, s), tr]).filter(([r]) => r < 3).sort((a, b) => a[0] - b[0]).slice(0, 20) : [];
+    rows.forEach(tr => tr.hidden = true);
+    hits.forEach(([, tr]) => { tr.hidden = false; tbody.append(tr); });
+    box.hidden = !hits.length; none.hidden = !s || hits.length > 0;
+  });
 })();"""
 
 GLOSSARY = """<section id="glossary"><h2>מילון מושגים</h2>
@@ -339,7 +370,8 @@ def page(sections, generated):
 <main>{PANEL}{sections}{GLOSSARY}</main>
 <footer>נתונים: Yahoo Finance דרך yfinance, מחירים מתואמים לדיבידנדים ופיצולים. RSI לפי 14 ימים (Wilder).
 מחזור יחסי = מחזור היום חלקי ממוצע 20 הימים הקודמים. הדף הוא כלי סינון ולא המלצת השקעה.</footer>
-<script>{SIZING_JS}</script>
+<script>{SIZING_JS}
+{SEARCH_JS}</script>
 </body></html>"""
 
 
@@ -361,13 +393,14 @@ def main():
     il = {f"{k}.TA": v for k, v in TASE.items()}
 
     fx = usd_ils()
+    us_df, il_df = scan(us), scan(il)
+    us_url = lambda s: f"https://www.tradingview.com/chart/?symbol={s.replace('-', '.')}"
+    il_url = lambda s: f"https://www.tradingview.com/chart/?symbol=TASE:{s.removesuffix('.TA')}"
     sections = (
-        market("us", "ארה״ב · S&P 500", scan(us),
-               lambda s: f"https://www.tradingview.com/chart/?symbol={s.replace('-', '.')}",
-               f"מחירים בדולר · דולר = {fx:.3f} ₪" if fx else "מחירים בדולר · אין שער דולר, גודל עסקה לא חושב", fx)
-        + market("il", "תל אביב · מניות גדולות", scan(il),
-                 lambda s: f"https://www.tradingview.com/chart/?symbol=TASE:{s.removesuffix('.TA')}",
-                 "מחירים באגורות", 0.01)
+        search_box([(us_df, us_url, fx, "ארה״ב"), (il_df, il_url, 0.01, "ת״א")])
+        + market("us", "ארה״ב · S&P 500", us_df, us_url,
+                 f"מחירים בדולר · דולר = {fx:.3f} ₪" if fx else "מחירים בדולר · אין שער דולר, גודל עסקה לא חושב", fx)
+        + market("il", "תל אביב · מניות גדולות", il_df, il_url, "מחירים באגורות", 0.01)
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page(sections, dt.datetime.now(ZoneInfo("Asia/Jerusalem"))), encoding="utf-8")
