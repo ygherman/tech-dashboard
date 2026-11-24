@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: "0 4 * * 2-6"   # 04:00 UTC = 07:00 Israel (06:00 in winter), Tue-Sat
   workflow_dispatch:         # "Run workflow" button for a manual refresh
+  push:
+    branches: [main]
+    paths: [watchlist.txt]   # rebuild right after the watchlist is edited
 
 permissions:
   contents: read

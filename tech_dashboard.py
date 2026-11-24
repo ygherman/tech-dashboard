@@ -12,6 +12,7 @@ Usage:  python tech_dashboard.py [--out site/index.html]
 import argparse
 import datetime as dt
 import html
+import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -34,6 +35,11 @@ TASE = {
     "MTRX": "מטריקס", "AMOT": "עמות", "PAZ": "פז", "MVNE": "מבנה",
 }
 
+WATCHLIST = Path(__file__).with_name("watchlist.txt")
+# Set by GitHub Actions; used for the "edit watchlist" link
+REPO = os.environ.get("GITHUB_REPOSITORY")
+EDIT_URL = f"https://github.com/{REPO}/edit/main/watchlist.txt" if REPO else None
+
 RSI_HIGH, RSI_LOW = 70, 30
 GAP_MIN = 3.0          # % open vs previous close
 TOP_N = 10             # rows per table
@@ -49,6 +55,21 @@ FAVICON = (
     "%3Cpath d='M24 4v15' stroke='%2322c55e'/%3E%3Crect x='21' y='6' width='6' height='9' rx='1' fill='%2322c55e'/%3E"
     "%3C/g%3E%3C/svg%3E"
 )
+
+
+def read_watchlist():
+    """watchlist.txt: one ticker per line, optional name after it; '#' starts a comment.
+    US tickers as written (BRK.B is fine), TASE tickers with a .TA suffix (e.g. TEVA.TA)."""
+    if not WATCHLIST.exists():
+        return {}
+    out = {}
+    for line in WATCHLIST.read_text(encoding="utf-8").splitlines():
+        sym, _, name = line.split("#")[0].strip().partition(" ")
+        if sym:
+            sym = sym.upper()
+            sym = sym if sym.endswith(".TA") else sym.replace(".", "-")  # Yahoo: BRK.B -> BRK-B
+            out[sym] = name.strip() or sym
+    return out
 
 
 def rsi(close, n=14):
@@ -178,18 +199,22 @@ def search_box(markets):
     rows = "".join(row(r, url, fx, tag) for df, url, fx, tag in markets for _, r in df.iterrows())
     return f"""<section class="search"><input id="q" type="search" placeholder="חיפוש מניה לפי טיקר או שם" autocomplete="off">
 <div class="scroll" hidden><table><thead><tr>{THEAD}</tr></thead><tbody id="all">{rows}</tbody></table></div>
-<p class="empty" hidden>לא נמצאה מניה. הסורק כולל רק את S&amp;P 500 ואת המניות הגדולות בתל אביב.</p></section>"""
+<p class="empty" hidden>לא נמצאה מניה. הסורק כולל את S&amp;P 500, את המניות הגדולות בתל אביב ואת רשימת המעקב.{f' <a href="{EDIT_URL}" target="_blank" rel="noopener">הוסיפי לרשימת המעקב</a>' if EDIT_URL else ""}</p></section>"""
 
 
-def market(key, title, df, chart_url, unit, fx):
-    """fx: ILS per one unit of the quote currency (None = no sizing)."""
+def market(key, title, df, chart_url, unit, fx, watch=()):
+    """fx: ILS per one unit of the quote currency (None = no sizing). watch: watchlist symbols."""
     if df.empty:
         return f'<section id="{key}" class="market"><h2>{title}</h2><p class="empty">לא התקבלו נתונים.</p></section>'
     last = df["date"].max()
     df = df[df["date"] == last]  # drop symbols that did not trade on the last session
     df = df.assign(n=df["signals"].str.len())  # signal count, as a column so filters keep it aligned
     t = lambda *a: table(*a, chart_url, fx)
+    edit = f' · <a href="{EDIT_URL}" target="_blank" rel="noopener">עריכה</a>' if EDIT_URL else ""
     parts = [
+        t("רשימת המעקב שלי", f"המניות מ-watchlist.txt{edit}", df[df.sym.isin(watch)].sort_values("sym")),
+    ] if any(s in set(df.sym) for s in watch) else []
+    parts += [
         t("שווה לשים לב", "מניות עם שני אותות ומעלה, לפי מספר האותות ומחזור יחסי",
           df[df.n >= 2].sort_values(["n", "relvol"], ascending=False)),
         t("פריצה לשיא 52 שבועות", "סגירה מעל השיא של השנה האחרונה. מחזור יחסי גבוה מחזק את הפריצה",
@@ -393,14 +418,17 @@ def main():
     il = {f"{k}.TA": v for k, v in TASE.items()}
 
     fx = usd_ils()
+    watch = read_watchlist()
+    for sym, name in watch.items():  # watchlist stocks join their market's scan (and its signal tables)
+        (il if sym.endswith(".TA") else us).setdefault(sym, name)
     us_df, il_df = scan(us), scan(il)
     us_url = lambda s: f"https://www.tradingview.com/chart/?symbol={s.replace('-', '.')}"
     il_url = lambda s: f"https://www.tradingview.com/chart/?symbol=TASE:{s.removesuffix('.TA')}"
     sections = (
         search_box([(us_df, us_url, fx, "ארה״ב"), (il_df, il_url, 0.01, "ת״א")])
         + market("us", "ארה״ב · S&P 500", us_df, us_url,
-                 f"מחירים בדולר · דולר = {fx:.3f} ₪" if fx else "מחירים בדולר · אין שער דולר, גודל עסקה לא חושב", fx)
-        + market("il", "תל אביב · מניות גדולות", il_df, il_url, "מחירים באגורות", 0.01)
+                 f"מחירים בדולר · דולר = {fx:.3f} ₪" if fx else "מחירים בדולר · אין שער דולר, גודל עסקה לא חושב", fx, watch)
+        + market("il", "תל אביב · מניות גדולות", il_df, il_url, "מחירים באגורות", 0.01, watch)
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(page(sections, dt.datetime.now(ZoneInfo("Asia/Jerusalem"))), encoding="utf-8")
