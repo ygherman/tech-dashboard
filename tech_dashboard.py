@@ -177,11 +177,11 @@ def market(key, title, df, chart_url, unit, fx):
         return f'<section id="{key}" class="market"><h2>{title}</h2><p class="empty">לא התקבלו נתונים.</p></section>'
     last = df["date"].max()
     df = df[df["date"] == last]  # drop symbols that did not trade on the last session
-    n = df["signals"].str.len()
+    df = df.assign(n=df["signals"].str.len())  # signal count, as a column so filters keep it aligned
     t = lambda *a: table(*a, chart_url, fx)
     parts = [
         t("שווה לשים לב", "מניות עם שני אותות ומעלה, לפי מספר האותות ומחזור יחסי",
-          df[n >= 2].assign(n=n).sort_values(["n", "relvol"], ascending=False)),
+          df[df.n >= 2].sort_values(["n", "relvol"], ascending=False)),
         t("פריצה לשיא 52 שבועות", "סגירה מעל השיא של השנה האחרונה. מחזור יחסי גבוה מחזק את הפריצה",
           df[df.close > df.hi52].sort_values("relvol", ascending=False)),
         t("שבירה לשפל 52 שבועות", "סגירה מתחת לשפל של השנה האחרונה",
